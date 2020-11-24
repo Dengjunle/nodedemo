@@ -36,6 +36,26 @@ router.post('/register',async function(req,res,next){
     }
 })
 
+async function menuRecursion(listId){
+    let selRoleMenuSql = "select * from menu WHERE id in (?)";
+    let selRoleMenuResult = await sqlQuery(selRoleMenuSql,[listId]);
+    let menuList = [];
+    let menuListId = [];
+    for(let i=0;i<selRoleMenuResult.length;i++){
+        menuList.push(selRoleMenuResult[i].menuurl);
+        menuListId.push(selRoleMenuResult[i].id)
+    }
+    let pidMenuList = [];
+    for(let i=0;i<selRoleMenuResult.length;i++){
+        if(selRoleMenuResult[i].pid!=0&&menuListId.indexOf(selRoleMenuResult[i].pid)==-1){
+            pidMenuList.push(selRoleMenuResult[i].pid)
+        }
+    }
+    if(pidMenuList.length>0){menuList.push(...await menuRecursion(pidMenuList))}
+    
+    return menuList;
+}
+
 /**
  * @typedef Login
  * @property {string} username.required
@@ -54,8 +74,16 @@ router.post('/login',async function(req,res,next){
     let {username,password} = req.body;
     let sql = "select id,username,mobile,imgheader,roleid from user where username = ? and password = ?";
     let result = await sqlQuery(sql,[username,jiamiMd5(password)]);
-    console.log("result",result)
+    
     if(result.length>0){
+        let selRoleMenuSql = "select menuid from role_menu where roleid = ?";
+    console.log(result[0])
+    let selRoleMenuResult = await sqlQuery(selRoleMenuSql,[result[0].roleid]);
+    let menuList = [];
+    for(let i=0;i<selRoleMenuResult.length;i++){
+        menuList.push(selRoleMenuResult[i].menuid);
+    }
+    menuList = await menuRecursion(menuList)
         let token = await setToken(result[0]);
         switch(result[0].roleid){
             case 0:
@@ -68,7 +96,7 @@ router.post('/login',async function(req,res,next){
                 result[0].role = ['USER'];
                 break;
         }
-        res.send(success({...result[0],token},"登录成功"));
+        res.send(success({...result[0],token,menuList},"登录成功"));
     }else{
         res.send(fail(result,'账号或密码错误'));
     }

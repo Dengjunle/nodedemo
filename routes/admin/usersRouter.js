@@ -5,6 +5,7 @@ var sqlQuery = require("../../utils/mysql");
 const {verToken} = require("../../utils/token");
 const {jiamiMd5} = require("../../utils/cropto");
 const {success,fail} = require("../../utils/response");
+const { json } = require('express');
 
 /**
  * @typedef User
@@ -241,13 +242,17 @@ router.get("/role",async function(req,res,next){
   let {page,limit} = req.query;
   page = parseInt(page);
   limit = parseInt(limit);
-  // let sql = "select a.id,a.name,a.brief,CONCAT('[',GROUP_CONCAT(CONCAT(HEX(b.authid))),']')	as authList from role a LEFT JOIN role_auth b on a.id = b.roleid GROUP BY a.id limit ?,?";
-  let sql = `select id, name ,brief,(select GROUP_CONCAT(authid)  from role_auth as ra WHERE ra.roleid = r.id GROUP BY r.id) as authMenu from role as r;`
+  let sql = "select c.id,c.name,c.brief,c.authList,CONCAT('[',GROUP_CONCAT(CONCAT(d.menuid)),']') as menuList from (select a.id,a.name,a.brief,CONCAT('[',GROUP_CONCAT(CONCAT(b.authid)),']')	as authList from role a LEFT JOIN role_auth b on a.id = b.roleid GROUP BY a.id) c LEFT JOIN role_menu d on c.id = d.roleid GROUP BY c.id limit ?,?";
   let result = await sqlQuery(sql,[(page-1)*limit,limit]);
+  result = Array.from(result);
+  result.forEach((item)=>{
+    item.authList = JSON.parse(item.authList?item.authList:'[]');
+    item.menuList = JSON.parse(item.menuList?item.menuList:'[]');
+  })
   let countSql = 'SELECT COUNT(*)as count from role';
   let total = await sqlQuery(countSql)
   if(result.length>0){
-    res.json(success({list:Array.from(result),total:total[0].count},'查询成功'));
+    res.json(success({list:result,total:total[0].count},'查询成功'));
   }else{
     res.json(success([],'查询成功'));
   }
@@ -257,6 +262,8 @@ router.get("/role",async function(req,res,next){
  * @typedef role
  * @property {string} authname.required
  * @property {string} authurl.required
+ * @property {array} authList.required
+ * @property {array} menuList.required
  * @property {integer} id
 */
 
@@ -269,25 +276,67 @@ router.get("/role",async function(req,res,next){
  * @returns {Error}  default - Unexpected error
  */
 router.post("/role",async function(req,res,next){
-  let {authname,authurl,id} = req.body;
+  let {name,brief,id,authList,menuList} = req.body;
   if(id){
-    let sql = 'select * from auth where authname = ? and id != ?';
-    let result = await sqlQuery(sql,[authname,id]);
+    let sql = 'select * from role where name = ? and id != ?';
+    let result = await sqlQuery(sql,[name,id]);
     if(result.length>0){
-      res.json(fail('','修改失败，权限名已存在'))
+      res.json(fail('','修改失败，用户名已存在'))
     }else{
-      let sql = 'update auth set authname=?,authurl=? where id = ?';
-      let result = await sqlQuery(sql,[authname,authurl,id]);
+      let selAuthSql = "select CONCAT('[',GROUP_CONCAT(CONCAT(HEX(role_auth.authid))),']')	as authList from role_auth where roleid = ?";
+      let selAuthResult = await sqlQuery(selAuthSql,[id]);
+      selAuthResult[0].authList = JSON.parse(selAuthResult[0].authList?selAuthResult[0].authList:'[]');
+      selAuthResult[0].authList.forEach(async(item)=>{
+        if(authList.indexOf(item)==-1){
+          let delRoleAuthSql = 'delete from role_auth where roleid = ? and authid = ?';
+          let delRoleAuthResult = await sqlQuery(delRoleAuthSql,[id,item]);
+        }
+      })
+      authList.forEach(async(item)=>{
+        if(selAuthResult[0].authList.indexOf(item)==-1){
+          let addRoleAuthSql = 'insert into role_auth (roleid,authid) values (?,?)';
+          let addRoleAuthResult = await sqlQuery(addRoleAuthSql,[id,item]);
+        }
+      })
+
+      let selMenuSql = "select CONCAT('[',GROUP_CONCAT(CONCAT(HEX(role_menu.menuid))),']')	as menuList from role_menu where roleid = ?";
+      let selMenuResult = await sqlQuery(selMenuSql,[id]);
+      selMenuResult[0].menuList = JSON.parse(selMenuResult[0].menuList?selMenuResult[0].menuList:'[]');
+      selMenuResult[0].menuList.forEach(async(item)=>{
+        if(menuList.indexOf(item)==-1){
+          let delRoleMenuSql = 'delete from role_menu where roleid = ? and menuid = ?';
+          let delRoleAuthResult = await sqlQuery(delRoleMenuSql,[id,item]);
+        }
+      })
+      menuList.forEach(async(item)=>{
+        if(selMenuResult[0].menuList.indexOf(item)==-1){
+          let addRoleMenuSql = 'insert into role_menu (roleid,menuid) values (?,?)';
+          let addRoleMenuResult = await sqlQuery(addRoleMenuSql,[id,item]);
+        }
+      })
+      
+      let sql = 'update role set name=?,brief=? where id = ?';
+      let result = await sqlQuery(sql,[name,brief,id]);
       res.json(success('','修改成功'));
     }
   }else{
-    let sql = 'select * from auth where authname = ?';
-    let result = await sqlQuery(sql,[authname]);
+    let sql = 'select * from role where name = ?';
+    let result = await sqlQuery(sql,[name]);
     if(result.length>0){
-      res.json(fail('','添加失败，权限名已存在'))
+      res.json(fail('','添加失败，用户名已存在'))
     }else{
-      let addSql = 'insert into auth (authname,authurl) values (?,?)';
-      await sqlQuery(addSql,[authname,authurl]);
+      let addSql = 'insert into role (name,brief) values (?,?)';
+      await sqlQuery(addSql,[name,brief]);
+      let selSql = 'select * from role where name = ? ';
+      let selResult = await sqlQuery(selSql,[name]);
+      authList.forEach(async(item)=>{
+        let addAuthSql = 'insert into role_auth (roleid,authid) values (?,?)';
+        await sqlQuery(addAuthSql,[selResult[0].id,item]);
+      })
+      menuList.forEach(async(item)=>{
+        let addMenuSql = 'insert into role_menu (roleid,menuid) values (?,?)';
+        await sqlQuery(addMenuSql,[selResult[0].id,item]);
+      })
       res.json(success('','添加成功'));
     }
   }
@@ -304,6 +353,96 @@ router.post("/role",async function(req,res,next){
 router.delete("/role",async function(req,res,next){
   req.body.auth.forEach(async (id)=>{
     let sql = 'DELETE FROM role where id = ?';
+    let result = await sqlQuery(sql,[id]);
+  })
+  res.json(success({},'删除成功'))
+})
+
+
+async function getMenuList(result){
+  let arr = [];
+  for(let i=0;i<result.length;i++){
+    let selSql = 'select * from menu where pid = ?';
+    let selResult = await sqlQuery(selSql,[result[i].id]);
+    result[i].children = []
+    result[i].children.push(...selResult);
+    result[i].children = await getMenuList(selResult)
+    arr.push(result[i]);
+  }
+  return arr;
+}
+/**
+ * 获取菜单
+ * @route GET /admin/users/menu
+ * @group 管理员
+ * @returns {object} 200 
+ * @returns {Error}  default - Unexpected error
+ */
+router.get("/menu",async function(req,res,next){
+  let sql = 'select * from menu where pid = 0';
+  let result = await sqlQuery(sql);
+  result = await getMenuList(result);
+  if(result.length>0){
+    res.json(success(result,'查询成功'));
+  }else{
+    res.json(success([],'查询成功'));
+  }
+})
+
+/**
+ * @typedef AddMenu
+ * @property {integer} id.required
+ * @property {string} menuname.required
+ * @property {string} brief.required
+ * @property {string} menuurl.required
+ * @property {integer} pid.required
+*/
+
+/**
+ * 添加菜单
+ * @route POST /admin/users/menu
+ * @group 管理员
+ * @param {AddMenu.model} menu.body.required - poionss
+ * @returns {object} 200 
+ * @returns {Error}  default - Unexpected error
+ */
+router.post("/menu",async function(req,res,next){
+  let {id,menuname,brief,menuurl,pid} = req.body;
+  pid = pid|0;
+  if(id){
+    let sql = 'select * from menu where menuname = ? and id != ?';
+    let result = await sqlQuery(sql,[menuname,id]);  
+    if(result.length>0){
+      res.json(fail('','修改失败，菜单名已存在'))
+    }else{
+      let updateSql = 'update menu set menuname=?,brief=?,menuurl=?,pid=? where id = ?';
+      await sqlQuery(updateSql,[menuname,brief,menuurl,pid,id]);
+      res.json(success('','修改成功'));
+    }
+  }else{
+    let sql = 'select * from menu where menuname = ?';
+    let result = await sqlQuery(sql,[menuname]); 
+    if(result.length>0){
+      res.json(fail('','添加失败，菜单名已存在'))
+    }else{
+      let addSql = 'insert into menu (menuname,brief,menuurl,pid) values (?,?,?,?)';
+      await sqlQuery(addSql,[menuname,brief,menuurl,pid]);
+      res.json(success('','添加成功'));
+    }
+  }
+})
+
+/**
+ * 删除菜单
+ * @route DELETE /admin/users/menu 
+ * @group 管理员
+ * @param {integer} id.query.required - 菜单id
+ * @returns {object} 200 
+ * @returns {Error}  default - Unexpected error
+ */
+router.delete("/menu",async function(req,res,next){
+  req.body.menu.forEach(async (id)=>{
+    let sql = 'DELETE FROM menu where id = ?';
     let result = await sqlQuery(sql,[id]);
   })
   res.json(success({},'删除成功'))

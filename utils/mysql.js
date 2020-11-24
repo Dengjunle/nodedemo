@@ -23,12 +23,40 @@ function sqlQuery(strSql,arr){
     return new Promise((resolve,reject)=>{
         con.query(strSql,arr,(err,result)=>{
             if(err){
+                con.rollback();
                 reject(err);
             }else{
                 resolve(result);
             }
         })
     })
+}
+
+function sqlQueryList(strSqlList){
+    return new Promise((resolve,reject)=>{
+        con.beginTransaction()
+        strSqlList.forEach((item)=>{
+            con.query(item.sql,item.arr,(err,result)=>{
+                if(err){
+                    reject(err);
+                }else{
+                    resolve(result);
+                }
+            })
+        })
+    })
+}
+
+function rollback(){
+    con.rollback();
+}
+
+function commit(){
+    con.commit();
+}
+
+function beginTransaction(){
+    con.beginTransaction();
 }
 
 module.exports = sqlQuery
